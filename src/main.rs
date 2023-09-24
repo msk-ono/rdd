@@ -22,8 +22,8 @@ fn main() {
     let result = parse(&exp);
     if result.is_ok() {
         let (_arena, bdd) = result.unwrap();
-        println!("answers: {}", bdd.num_answers());
-        // println!("graphviz: \n{}", dump_graphviz(bdd, "bdd", false));
+        println!("Num answers: {}", bdd.num_answers());
+        println!("Graphviz: \n{}", bdd.dump_graphviz("BDD", false));
     } else {
         let error = result.err().unwrap();
         let loc = error.loc();

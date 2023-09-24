@@ -83,6 +83,58 @@ impl BDD {
     pub fn num_nodes(&self) -> u32 {
         self.node().num_nodes()
     }
+    pub fn dump_graphviz(&self, title: &str, draw_edge_to_false: bool) -> String {
+        if self.node().is_false() {
+            return format!("digraph {} {{\n    ⊥;\n}}\n", title);
+        } else if self.node().is_true() {
+            return format!("digraph {} {{\n    ⊤;\n}}\n", title);
+        }
+
+        let mut ret = String::new();
+        ret.reserve(1024 * 1024);
+        ret += &format!("digraph {} {{\n", title); // Prefix.
+
+        let mut bdd_stack = vec![self.node()];
+        let mut bdd_set = FnvHashSet::default();
+        bdd_set.insert(self.node().id());
+        while !bdd_stack.is_empty() {
+            let node = bdd_stack.pop().unwrap();
+
+            // Node.
+            ret += &format!(
+                "    n{} [label=\"{}\"];\n",
+                node.id(),
+                self.arena().name(node.var())
+            );
+            // Edge to lo.
+            let lo = node.lo().unwrap();
+            if !lo.is_false() || draw_edge_to_false {
+                ret += &format!("    n{} -> n{} [style=dotted];\n", node.id(), lo.id());
+            }
+            if !lo.is_constant() && !bdd_set.contains(&lo.id()) {
+                bdd_stack.push(lo);
+                bdd_set.insert(lo.id());
+            }
+            // Edge to hi.
+            let hi = node.hi().unwrap();
+            if !hi.is_false() || draw_edge_to_false {
+                ret += &format!("    n{} -> n{};\n", node.id(), hi.id());
+            }
+            if !hi.is_constant() && !bdd_set.contains(&hi.id()) {
+                bdd_stack.push(hi);
+                bdd_set.insert(hi.id());
+            }
+        }
+        // Terminals: false node and true node.
+        if draw_edge_to_false {
+            ret += &format!("    n{} [label=\"⊥\", shape = box];\n", FALSE_NODE_ID);
+        }
+        ret += &format!("    n{} [label=\"⊤\", shape = box];\n", TRUE_NODE_ID);
+        ret += "}\n"; // Suffix.
+        ret.shrink_to_fit();
+
+        ret
+    }
 }
 impl ops::BitXor for BDD {
     type Output = Self;
@@ -266,6 +318,9 @@ impl BDDArena {
         iter.next().unwrap().var = BoolVar::new(var.x() + 1); // Set var of true_nod.
 
         BDD::new(self.mk(var, self.false_node(), self.true_node()), self)
+    }
+    pub fn name(&self, var: BoolVar) -> &str {
+        &self.vars[var.x() as usize]
     }
     pub fn num_vars(&self) -> usize {
         self.vars.len()
