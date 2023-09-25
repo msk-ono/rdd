@@ -23,6 +23,7 @@ fn main() {
     if result.is_ok() {
         let (_arena, bdd) = result.unwrap();
         println!("Num answers: {}", bdd.num_answers());
+        println!("Num nodes: {}", bdd.num_nodes());
         println!("Graphviz: \n{}", bdd.dump_graphviz("BDD", false));
     } else {
         let error = result.err().unwrap();
