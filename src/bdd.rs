@@ -1,6 +1,7 @@
-use std::{collections::LinkedList, ops, vec};
-
 use fnv::{FnvHashMap, FnvHashSet};
+use rand::rngs::ThreadRng;
+use rand::{distributions::Uniform, Rng};
+use std::{collections::LinkedList, ops, vec};
 
 /// Id type of variable.
 pub type VarID = u32;
@@ -19,6 +20,30 @@ impl BoolVar {
     }
     pub const fn x(&self) -> VarID {
         self.0
+    }
+}
+#[derive(Debug)]
+pub struct BDDSampler {
+    entry_id: NodeID,
+    node: FnvHashMap<NodeID, (BoolVar, NodeID, u64, NodeID, u64)>,
+}
+impl BDDSampler {
+    pub fn sample(&self, rng: &mut ThreadRng) -> FnvHashMap<BoolVar, bool> {
+        let mut map = FnvHashMap::default();
+        let dist = Uniform::new(0.0, 1.0);
+        let mut id = self.entry_id;
+        while id != TRUE_NODE_ID {
+            let (var, id_lo, w_lo, id_hi, w_hi) = self.node.get(&id).unwrap();
+            let prob = *w_lo as f64 / ((w_lo + w_hi) as f64);
+            if rng.sample(dist) <= prob {
+                map.insert(*var, false);
+                id = *id_lo;
+            } else {
+                map.insert(*var, true);
+                id = *id_hi;
+            }
+        }
+        map
     }
 }
 /// BDD.
@@ -82,6 +107,15 @@ impl BDD {
     }
     pub fn num_nodes(&self) -> u32 {
         self.node().num_nodes()
+    }
+    pub fn construct_sampler(&self) -> BDDSampler {
+        let mut sampler = BDDSampler {
+            entry_id: self.node().id(),
+            node: FnvHashMap::default(),
+        };
+        self.node().construct_sampler(&mut sampler);
+
+        sampler
     }
     pub fn dump_graphviz(&self, title: &str, draw_edge_to_false: bool) -> String {
         if self.node().is_false() {
@@ -244,6 +278,43 @@ impl BDDNode {
             let num_hi = hi.num_answers(num_vars);
             let scale_hi = 1u64 << (hi.var().x() - var - 1);
             scale_lo * num_lo + scale_hi * num_hi
+        }
+    }
+    pub fn construct_sampler(&self, sampler: &mut BDDSampler) {
+        if self.is_constant() {
+            return;
+        }
+
+        let id = self.id();
+        let var = self.var();
+        sampler.node.insert(id, (var, 0, 0u64, 0, 0u64));
+        let lo = self.lo().unwrap();
+        let scale_lo = 1u64 << (lo.var().x() - var.x() - 1);
+        if lo.is_constant() {
+            if lo.is_true() {
+                sampler.node.get_mut(&id).unwrap().1 = TRUE_NODE_ID;
+                sampler.node.get_mut(&id).unwrap().2 = scale_lo;
+            }
+        } else {
+            let id_lo = lo.id();
+            lo.construct_sampler(sampler);
+            sampler.node.get_mut(&id).unwrap().1 = id_lo;
+            sampler.node.get_mut(&id).unwrap().2 = scale_lo
+                * (sampler.node.get(&id_lo).unwrap().2 + sampler.node.get(&id_lo).unwrap().4);
+        }
+        let hi = self.hi().unwrap();
+        let scale_hi = 1u64 << (hi.var().x() - var.x() - 1);
+        if hi.is_constant() {
+            if hi.is_true() {
+                sampler.node.get_mut(&id).unwrap().3 = TRUE_NODE_ID;
+                sampler.node.get_mut(&id).unwrap().4 = scale_hi;
+            }
+        } else {
+            let id_hi = hi.id();
+            hi.construct_sampler(sampler);
+            sampler.node.get_mut(&id).unwrap().3 = id_hi;
+            sampler.node.get_mut(&id).unwrap().4 = scale_hi
+                * (sampler.node.get(&id_hi).unwrap().2 + sampler.node.get(&id_hi).unwrap().4);
         }
     }
     fn insert_all_nodes(&self, set: &mut FnvHashSet<NodeID>) {
@@ -462,6 +533,10 @@ mod test {
         exp = !exp;
         assert_eq!(18, exp.num_answers());
         assert_eq!(16, exp.num_nodes());
+        let sampler = exp.construct_sampler();
+        assert_eq!(14, sampler.node.len());
+        let entry_node = sampler.node.get(&sampler.entry_id).unwrap();
+        assert_eq!(18, entry_node.2 + entry_node.4);
 
         // Define kernel of C6.
         let mut exists = arena.true_bdd();
@@ -471,5 +546,10 @@ mod test {
         exp &= exists;
         assert_eq!(5, exp.num_answers());
         assert_eq!(17, exp.num_nodes());
+
+        let sampler = exp.construct_sampler();
+        assert_eq!(15, sampler.node.len());
+        let entry_node = sampler.node.get(&sampler.entry_id).unwrap();
+        assert_eq!(5, entry_node.2 + entry_node.4);
     }
 }
