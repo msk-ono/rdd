@@ -11,7 +11,13 @@ Currently supported DDs are as follows.
 $ cat examples/boolean_formula/median.txt | cargo run
 Num answers: 4
 Num nodes: 6
-Graphviz: 
+Sample answers:
+B: false, A: true, C: true, 
+B: false, A: true, C: true, 
+B: true, A: true, 
+B: true, A: true, 
+B: true, A: false, C: true, 
+Graphviz:
 digraph BDD {
     n10 [label="A"];
     n10 -> n6 [style=dotted];

@@ -1,3 +1,4 @@
+use rand::thread_rng;
 use rdd::parser::parse;
 
 fn pretty_error(input: &str, start: usize, end: usize) -> String {
@@ -9,6 +10,7 @@ fn pretty_error(input: &str, start: usize, end: usize) -> String {
 }
 
 fn main() {
+    const NUM_SAMPLES: usize = 5;
     use std::io::{self, BufRead};
     let stdio = io::stdin();
     let mut input = stdio.lock();
@@ -21,10 +23,20 @@ fn main() {
 
     let result = parse(&exp);
     if result.is_ok() {
-        let (_arena, bdd) = result.unwrap();
+        let (arena, bdd) = result.unwrap();
         println!("Num answers: {}", bdd.num_answers());
         println!("Num nodes: {}", bdd.num_nodes());
-        println!("Graphviz: \n{}", bdd.dump_graphviz("BDD", false));
+        println!("Sample answers:");
+        let sampler = bdd.construct_sampler();
+        let mut rng = thread_rng();
+        for _ in 0..NUM_SAMPLES {
+            let answer = sampler.sample(&mut rng);
+            for (var, value) in answer.into_iter() {
+                print!("{}: {}, ", arena.name(var), value);
+            }
+            println!();
+        }
+        println!("Graphviz:\n{}", bdd.dump_graphviz("BDD", false));
     } else {
         let error = result.err().unwrap();
         let loc = error.loc();
