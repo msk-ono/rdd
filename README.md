@@ -12,24 +12,24 @@ $ cat examples/boolean_formula/median.txt | cargo run
 Num answers: 4
 Num nodes: 6
 Sample answers:
-B: false, A: true, C: true, 
-B: false, A: true, C: true, 
-B: true, A: true, 
 B: true, A: true, 
 B: true, A: false, C: true, 
+B: true, A: true, 
+B: true, A: true, 
+B: false, A: true, C: true, 
 Graphviz:
 digraph BDD {
-    n10 [label="A"];
-    n10 -> n6 [style=dotted];
-    n10 -> n9;
-    n9 [label="B"];
-    n9 -> n4 [style=dotted];
-    n9 -> n1;
-    n4 [label="C"];
-    n4 -> n1;
-    n6 [label="B"];
-    n6 -> n4;
+    n5 [label="A"];
+    n4 [label="B"];
+    n3 [label="B"];
+    n2 [label="C"];
     n1 [label="⊤", shape = box];
+    n5 -> n3 [style=dashed];
+    n5 -> n4 [style=solid];
+    n4 -> n2 [style=dashed];
+    n4 -> n1 [style=solid];
+    n3 -> n2 [style=solid];
+    n2 -> n1 [style=solid];
 }
 ```
 

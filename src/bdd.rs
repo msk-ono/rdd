@@ -22,30 +22,6 @@ impl BoolVar {
         self.0
     }
 }
-#[derive(Debug)]
-pub struct BDDSampler {
-    entry_id: NodeID,
-    node: FnvHashMap<NodeID, (BoolVar, NodeID, u64, NodeID, u64)>,
-}
-impl BDDSampler {
-    pub fn sample(&self, rng: &mut ThreadRng) -> FnvHashMap<BoolVar, bool> {
-        let mut map = FnvHashMap::default();
-        let dist = Uniform::new(0.0, 1.0);
-        let mut id = self.entry_id;
-        while id != TRUE_NODE_ID {
-            let (var, id_lo, w_lo, id_hi, w_hi) = self.node.get(&id).unwrap();
-            let prob = *w_lo as f64 / ((w_lo + w_hi) as f64);
-            if rng.sample(dist) <= prob {
-                map.insert(*var, false);
-                id = *id_lo;
-            } else {
-                map.insert(*var, true);
-                id = *id_hi;
-            }
-        }
-        map
-    }
-}
 /// BDD.
 ///
 /// BDD is wrapper of BDDNode.
@@ -108,66 +84,35 @@ impl BDD {
     pub fn num_nodes(&self) -> u32 {
         self.node().num_nodes()
     }
-    pub fn construct_sampler(&self) -> BDDSampler {
-        let mut sampler = BDDSampler {
-            entry_id: self.node().id(),
-            node: FnvHashMap::default(),
-        };
-        self.node().construct_sampler(&mut sampler);
+    pub fn serialize(&self) -> SerializedBDD {
+        let mut map = FnvHashMap::default();
+        self.node().convert_to_map(&mut map);
 
-        sampler
-    }
-    pub fn dump_graphviz(&self, title: &str, draw_edge_to_false: bool) -> String {
-        if self.node().is_false() {
-            return format!("digraph {} {{\n    ⊥;\n}}\n", title);
-        } else if self.node().is_true() {
-            return format!("digraph {} {{\n    ⊤;\n}}\n", title);
-        }
-
-        let mut ret = String::new();
-        ret.reserve(1024 * 1024);
-        ret += &format!("digraph {} {{\n", title); // Prefix.
-
-        let mut bdd_stack = vec![self.node()];
-        let mut bdd_set = FnvHashSet::default();
-        bdd_set.insert(self.node().id());
-        while !bdd_stack.is_empty() {
-            let node = bdd_stack.pop().unwrap();
-
-            // Node.
-            ret += &format!(
-                "    n{} [label=\"{}\"];\n",
-                node.id(),
-                self.arena().name(node.var())
-            );
-            // Edge to lo.
-            let lo = node.lo().unwrap();
-            if !lo.is_false() || draw_edge_to_false {
-                ret += &format!("    n{} -> n{} [style=dotted];\n", node.id(), lo.id());
-            }
-            if !lo.is_constant() && !bdd_set.contains(&lo.id()) {
-                bdd_stack.push(lo);
-                bdd_set.insert(lo.id());
-            }
-            // Edge to hi.
-            let hi = node.hi().unwrap();
-            if !hi.is_false() || draw_edge_to_false {
-                ret += &format!("    n{} -> n{};\n", node.id(), hi.id());
-            }
-            if !hi.is_constant() && !bdd_set.contains(&hi.id()) {
-                bdd_stack.push(hi);
-                bdd_set.insert(hi.id());
+        let num_vars = self.arena().num_vars();
+        let var = BoolVar::new(num_vars as VarID);
+        let mut sbdd = SerializedBDD { nodes: vec![] };
+        let mut id2idx = FnvHashMap::default();
+        sbdd.nodes.push(BranchNode::f(var));
+        id2idx.insert(FALSE_NODE_ID, 0);
+        sbdd.nodes.push(BranchNode::t(var));
+        id2idx.insert(TRUE_NODE_ID, 1);
+        // FIXME(msk-ono): Stop iterating map for many times.
+        for var in (0..num_vars).rev() {
+            let var = BoolVar::new(var as VarID);
+            for (id, (tmp, lo, hi)) in map.iter() {
+                if *tmp != var || id2idx.contains_key(id) {
+                    continue;
+                }
+                id2idx.insert(*id, sbdd.nodes.len());
+                sbdd.nodes.push(BranchNode::new(
+                    var,
+                    *id2idx.get(lo).unwrap(),
+                    *id2idx.get(hi).unwrap(),
+                ));
             }
         }
-        // Terminals: false node and true node.
-        if draw_edge_to_false {
-            ret += &format!("    n{} [label=\"⊥\", shape = box];\n", FALSE_NODE_ID);
-        }
-        ret += &format!("    n{} [label=\"⊤\", shape = box];\n", TRUE_NODE_ID);
-        ret += "}\n"; // Suffix.
-        ret.shrink_to_fit();
 
-        ret
+        sbdd
     }
 }
 impl ops::BitXor for BDD {
@@ -280,42 +225,21 @@ impl BDDNode {
             scale_lo * num_lo + scale_hi * num_hi
         }
     }
-    pub fn construct_sampler(&self, sampler: &mut BDDSampler) {
+    fn convert_to_map(&self, map: &mut FnvHashMap<NodeID, (BoolVar, NodeID, NodeID)>) {
         if self.is_constant() {
+            if self.is_false() {
+                map.insert(FALSE_NODE_ID, (self.var(), FALSE_NODE_ID, FALSE_NODE_ID));
+            } else if self.is_true() {
+                map.insert(TRUE_NODE_ID, (self.var(), TRUE_NODE_ID, TRUE_NODE_ID));
+            }
             return;
         }
 
-        let id = self.id();
-        let var = self.var();
-        sampler.node.insert(id, (var, 0, 0u64, 0, 0u64));
         let lo = self.lo().unwrap();
-        let scale_lo = 1u64 << (lo.var().x() - var.x() - 1);
-        if lo.is_constant() {
-            if lo.is_true() {
-                sampler.node.get_mut(&id).unwrap().1 = TRUE_NODE_ID;
-                sampler.node.get_mut(&id).unwrap().2 = scale_lo;
-            }
-        } else {
-            let id_lo = lo.id();
-            lo.construct_sampler(sampler);
-            sampler.node.get_mut(&id).unwrap().1 = id_lo;
-            sampler.node.get_mut(&id).unwrap().2 = scale_lo
-                * (sampler.node.get(&id_lo).unwrap().2 + sampler.node.get(&id_lo).unwrap().4);
-        }
         let hi = self.hi().unwrap();
-        let scale_hi = 1u64 << (hi.var().x() - var.x() - 1);
-        if hi.is_constant() {
-            if hi.is_true() {
-                sampler.node.get_mut(&id).unwrap().3 = TRUE_NODE_ID;
-                sampler.node.get_mut(&id).unwrap().4 = scale_hi;
-            }
-        } else {
-            let id_hi = hi.id();
-            hi.construct_sampler(sampler);
-            sampler.node.get_mut(&id).unwrap().3 = id_hi;
-            sampler.node.get_mut(&id).unwrap().4 = scale_hi
-                * (sampler.node.get(&id_hi).unwrap().2 + sampler.node.get(&id_hi).unwrap().4);
-        }
+        map.insert(self.id(), (self.var(), lo.id(), hi.id()));
+        lo.convert_to_map(map);
+        hi.convert_to_map(map);
     }
     fn insert_all_nodes(&self, set: &mut FnvHashSet<NodeID>) {
         let mut stack = vec![self];
@@ -463,6 +387,149 @@ impl BDDArena {
         }
     }
 }
+#[derive(Debug)]
+pub struct BranchNode {
+    pub var: BoolVar,
+    pub lo: usize,
+    pub hi: usize,
+}
+impl BranchNode {
+    fn new(var: BoolVar, lo: usize, hi: usize) -> Self {
+        BranchNode { var, lo, hi }
+    }
+    fn f(var: BoolVar) -> Self {
+        BranchNode::new(var, 0, 0)
+    }
+    fn t(var: BoolVar) -> Self {
+        BranchNode::new(var, 1, 1)
+    }
+}
+#[derive(Debug)]
+pub struct SerializedBDD {
+    nodes: Vec<BranchNode>,
+}
+impl SerializedBDD {
+    pub fn num_nodes(&self) -> usize {
+        self.nodes.len()
+    }
+    pub fn get(&self, idx: usize) -> Option<&BranchNode> {
+        self.nodes.get(idx)
+    }
+    pub fn calc_edge_weight(&self) -> Vec<(u64, u64)> {
+        let mut w = vec![(0, 0); self.num_nodes()];
+        w[1] = (0, 1);
+        for i in 2..self.num_nodes() {
+            let n = &self.nodes[i];
+            let lo = w[n.lo].0 + w[n.lo].1;
+            let hi = w[n.hi].0 + w[n.hi].1;
+            let scale_lo = 1u64 << (self.nodes[n.lo].var.x() - n.var.x() - 1);
+            let scale_hi = 1u64 << (self.nodes[n.hi].var.x() - n.var.x() - 1);
+            w[i] = (lo * scale_lo, hi * scale_hi);
+        }
+        w
+    }
+    pub fn num_answers(&self) -> u64 {
+        let w = self.calc_edge_weight();
+        let entry = w.last().unwrap();
+        entry.0 + entry.1
+    }
+}
+pub fn sample_answer_from_bdd(
+    sbdd: &SerializedBDD,
+    edge_weight: &Vec<(u64, u64)>,
+    rng: &mut ThreadRng,
+) -> FnvHashMap<BoolVar, bool> {
+    let mut map = FnvHashMap::default();
+    let distr = Uniform::new(0.0, 1.0);
+    let mut idx = sbdd.nodes.len() - 1;
+    while idx != 1 {
+        let n = &sbdd.nodes[idx];
+        let (w_lo, w_hi) = edge_weight[idx];
+        let prob = w_lo as f64 / ((w_lo + w_hi) as f64);
+        if rng.sample(distr) <= prob {
+            map.insert(n.var, false);
+            idx = n.lo;
+        } else {
+            map.insert(n.var, true);
+            idx = n.hi;
+        }
+    }
+    map
+}
+pub fn sample_answers_from_bdd(
+    sbdd: &SerializedBDD,
+    rng: &mut ThreadRng,
+    num_samples: usize,
+) -> Vec<FnvHashMap<BoolVar, bool>> {
+    let edge_weight = sbdd.calc_edge_weight();
+    let mut samples = vec![];
+    for _ in 0..num_samples {
+        samples.push(sample_answer_from_bdd(sbdd, &edge_weight, rng));
+    }
+    samples
+}
+pub struct DumpDotOption {
+    pub dump_weight: bool,
+    pub edge_style_lo: String,
+    pub edge_style_hi: String,
+}
+impl DumpDotOption {
+    pub fn new(dump_weight: bool, edge_style_lo: &str, edge_style_hi: &str) -> Self {
+        DumpDotOption {
+            dump_weight,
+            edge_style_lo: edge_style_lo.to_string(),
+            edge_style_hi: edge_style_hi.to_string(),
+        }
+    }
+    pub fn default() -> Self {
+        DumpDotOption::new(false, "dashed", "solid")
+    }
+}
+pub fn dump_dot(
+    arena: &BDDArena,
+    sbdd: &SerializedBDD,
+    title: &str,
+    option: &DumpDotOption,
+) -> String {
+    let mut ret = String::new();
+    ret.reserve(1024 * 1024); // Allocate 1MiB.
+    ret += &format!("digraph {} {{\n", title); // Prefix.
+
+    // Dump nodes.
+    for (idx, n) in sbdd.nodes.iter().enumerate().rev() {
+        if idx == 0 {
+            // ret += &format!("    n{} [label=\"⊥\", shape = box];\n", FALSE_NODE_ID);
+        } else if idx == 1 {
+            ret += &format!("    n{} [label=\"⊤\", shape = box];\n", TRUE_NODE_ID);
+        } else {
+            ret += &format!("    n{} [label=\"{}\"];\n", idx, arena.name(n.var));
+        }
+    }
+    // Dump edges.
+    for (idx, n) in sbdd.nodes.iter().enumerate().rev() {
+        // Constant nodes are terminal.
+        if idx == 0 || idx == 1 {
+            continue;
+        }
+
+        // TODO(msk-ono): Implement dump_weight option.
+        if n.lo != 0 {
+            ret += &format!(
+                "    n{} -> n{} [style={}];\n",
+                idx, n.lo, option.edge_style_lo
+            );
+        }
+        if n.hi != 0 {
+            ret += &format!(
+                "    n{} -> n{} [style={}];\n",
+                idx, n.hi, option.edge_style_hi
+            );
+        }
+    }
+    ret += "}\n"; // Suffix.
+
+    ret
+}
 
 #[cfg(test)]
 mod test {
@@ -504,7 +571,7 @@ mod test {
         assert_eq!(3, x.num_nodes());
     }
     #[test]
-    fn test_vas() {
+    fn test_vars() {
         let mut arena = BDDArena::new();
         let x = arena.new_var("x".to_string());
         let y = arena.new_var("y".to_string());
@@ -533,10 +600,9 @@ mod test {
         exp = !exp;
         assert_eq!(18, exp.num_answers());
         assert_eq!(16, exp.num_nodes());
-        let sampler = exp.construct_sampler();
-        assert_eq!(14, sampler.node.len());
-        let entry_node = sampler.node.get(&sampler.entry_id).unwrap();
-        assert_eq!(18, entry_node.2 + entry_node.4);
+        let sbdd = exp.serialize();
+        assert_eq!(18, sbdd.num_answers());
+        assert_eq!(16, sbdd.num_nodes());
 
         // Define kernel of C6.
         let mut exists = arena.true_bdd();
@@ -546,10 +612,8 @@ mod test {
         exp &= exists;
         assert_eq!(5, exp.num_answers());
         assert_eq!(17, exp.num_nodes());
-
-        let sampler = exp.construct_sampler();
-        assert_eq!(15, sampler.node.len());
-        let entry_node = sampler.node.get(&sampler.entry_id).unwrap();
-        assert_eq!(5, entry_node.2 + entry_node.4);
+        let sbdd = exp.serialize();
+        assert_eq!(5, sbdd.num_answers());
+        assert_eq!(17, sbdd.num_nodes());
     }
 }

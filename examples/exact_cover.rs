@@ -1,6 +1,6 @@
 extern crate rdd;
 
-use rdd::bdd::BDDArena;
+use rdd::bdd::{dump_dot, BDDArena, DumpDotOption};
 use std::fs::File;
 use std::io::Write;
 
@@ -96,7 +96,15 @@ fn main() -> std::io::Result<()> {
     println!("Num answers: {}", num_answers);
     println!("Num nodes: {}", num_nodes);
     let mut ofile = File::create("exact_cover.dot")?;
-    ofile.write_all(&exp.dump_graphviz("ExactCover", false).into_bytes())?;
+    ofile.write_all(
+        &dump_dot(
+            &arena,
+            &exp.serialize(),
+            "ExactCover",
+            &DumpDotOption::default(),
+        )
+        .into_bytes(),
+    )?;
 
     Ok(())
 }
