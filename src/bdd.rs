@@ -412,6 +412,9 @@ impl SerializedBDD {
     pub fn num_nodes(&self) -> usize {
         self.nodes.len()
     }
+    pub fn num_vars(&self) -> VarID {
+        self.nodes.first().unwrap().var.x()
+    }
     pub fn get(&self, idx: usize) -> Option<&BranchNode> {
         self.nodes.get(idx)
     }
@@ -432,6 +435,47 @@ impl SerializedBDD {
         let w = self.calc_edge_weight();
         let entry = w.last().unwrap();
         entry.0 + entry.1
+    }
+}
+pub struct BooleanProgrammingSolver {
+    sbdd: SerializedBDD,
+    weight: Vec<i64>,
+}
+impl BooleanProgrammingSolver {
+    pub fn new(sbdd: SerializedBDD, weight: Vec<i64>) -> Self {
+        BooleanProgrammingSolver { sbdd, weight }
+    }
+    pub fn solve(&self) -> (i64, Vec<BoolVar>) {
+        // Calculate DP table.
+        // FIXME(msk-ono): i64::MIN / 2 is temporal measure to prevent overflow.
+        let mut dp = vec![i64::MIN / 2; self.sbdd.num_nodes()];
+        dp[1] = 0;
+        for idx in 2..self.sbdd.num_nodes() {
+            let n = self.sbdd.get(idx).unwrap();
+            // If var is false.
+            let v_lo = dp[n.lo];
+            let v_hi = dp[n.hi] + self.weight[n.var.x() as usize];
+            dp[idx] = std::cmp::max(v_lo, v_hi);
+        }
+        // Calculate opt from DP table.
+        let mut opt = vec![];
+        let mut idx = self.sbdd.num_nodes() - 1;
+        while idx != 0 && idx != 1 {
+            let n = self.sbdd.get(idx).unwrap();
+            let v = dp[idx];
+            let v_lo = dp[n.lo];
+            let v_hi = dp[n.hi];
+            let w = self.weight[n.var.x() as usize];
+            if v == v_lo {
+                idx = n.lo;
+            } else if v == v_hi + w {
+                opt.push(n.var);
+                idx = n.hi;
+            } else {
+                unreachable!();
+            }
+        }
+        (dp[self.sbdd.num_nodes() - 1], opt)
     }
 }
 pub fn sample_answer_from_bdd(
