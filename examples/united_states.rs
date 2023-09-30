@@ -1,6 +1,6 @@
 extern crate rdd;
 
-use rdd::bdd::BDDArena;
+use rdd::bdd::{dump_dot, BDDArena, DumpDotOption};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
@@ -217,7 +217,15 @@ fn main() -> std::io::Result<()> {
     println!("The number of independent sets: {}", num_answers);
     println!("The number of independent set bdd nodes: {}", num_nodes);
     let mut ofile = File::create("independent_set.dot")?;
-    ofile.write_all(&f.dump_graphviz("IndependentSet", false).into_bytes())?;
+    ofile.write_all(
+        &dump_dot(
+            &arena,
+            &f.serialize(),
+            "IndependentSet",
+            &DumpDotOption::default(),
+        )
+        .into_bytes(),
+    )?;
 
     // Define kernel.
     for (u, next_vec) in us.edges().iter().enumerate() {
@@ -234,7 +242,9 @@ fn main() -> std::io::Result<()> {
     println!("The number of kernels: {}", num_answers);
     println!("The number of kernel bdd nodes: {}", num_nodes);
     let mut ofile = File::create("kernel.dot")?;
-    ofile.write_all(&f.dump_graphviz("Kernel", false).into_bytes())?;
+    ofile.write_all(
+        &dump_dot(&arena, &f.serialize(), "Kernel", &DumpDotOption::default()).into_bytes(),
+    )?;
 
     Ok(())
 }

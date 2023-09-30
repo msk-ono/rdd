@@ -1,4 +1,5 @@
 use rand::thread_rng;
+use rdd::bdd::{dump_dot, sample_answers_from_bdd, DumpDotOption};
 use rdd::parser::parse;
 
 fn pretty_error(input: &str, start: usize, end: usize) -> String {
@@ -27,16 +28,19 @@ fn main() {
         println!("Num answers: {}", bdd.num_answers());
         println!("Num nodes: {}", bdd.num_nodes());
         println!("Sample answers:");
-        let sampler = bdd.construct_sampler();
+        let sbdd = bdd.serialize();
         let mut rng = thread_rng();
-        for _ in 0..NUM_SAMPLES {
-            let answer = sampler.sample(&mut rng);
-            for (var, value) in answer.into_iter() {
-                print!("{}: {}, ", arena.name(var), value);
+        let samples = sample_answers_from_bdd(&sbdd, &mut rng, NUM_SAMPLES);
+        for sample in samples.iter() {
+            for (var, value) in sample.into_iter() {
+                print!("{}: {}, ", arena.name(*var), value);
             }
             println!();
         }
-        println!("Graphviz:\n{}", bdd.dump_graphviz("BDD", false));
+        println!(
+            "Graphviz:\n{}",
+            dump_dot(&arena, &sbdd, "BDD", &DumpDotOption::default())
+        );
     } else {
         let error = result.err().unwrap();
         let loc = error.loc();

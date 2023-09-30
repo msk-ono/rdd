@@ -1,6 +1,6 @@
 extern crate rdd;
 
-use rdd::bdd::BDDArena;
+use rdd::bdd::{dump_dot, BDDArena, DumpDotOption};
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
@@ -55,7 +55,15 @@ fn main() -> std::io::Result<()> {
     println!("Num answers: {}", num_answers);
     println!("Num nodes: {}", num_nodes);
     let mut ofile = File::create("set_partition.dot")?;
-    ofile.write_all(&f.dump_graphviz("SetPartition", false).into_bytes())?;
+    ofile.write_all(
+        &dump_dot(
+            &arena,
+            &f.serialize(),
+            "SetPartition",
+            &DumpDotOption::default(),
+        )
+        .into_bytes(),
+    )?;
 
     Ok(())
 }
