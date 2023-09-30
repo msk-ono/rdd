@@ -205,7 +205,7 @@ fn main() -> std::io::Result<()> {
         for v in next_vec.iter() {
             if u < *v {
                 let x = *vertices.get(&u).unwrap() & *vertices.get(v).unwrap();
-                f |= f | x;
+                f |= x;
             }
         }
     }
